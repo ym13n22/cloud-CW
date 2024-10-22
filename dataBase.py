@@ -151,7 +151,86 @@ def suggest(input_json):
         return json.dumps({"result":False,"msg":f"Fail to generate prompt.Error:{str(e)}"})
     
 def delete(input_json):
+    input_data=json.loads(input_json)
+    username=input_data.get("username")
+    try:
+        exiting_promp=prompt_container.read_item(item=username,pertition_key=username)
+        query=f"SELECT * FROM c WHERE c.username='{username}'"
+        items=list(prompt_container.query_items(query=query,enable_cross_partition_query=True))
+        #if not items:
+            #return json.dumps({"result": True,"msg":"0 prompts deleted"})
+        
+        deleted_count=0
+        for item in items:
+            prompt_container.delete_item(item=item['id'],partition_key=item['username'])
+            deleted_count +=1
+
+        return json.dumps({"result":True,"msg":f"{deleted_count} prompts deleted"})
+        
+    except exceptions.CCosmosResourceNotFoundError:
+        return json.dumps({"result": True,"msg":"0 prompts deleted"})
     
-def get_utils(input_json):
+def get_prompts(input_json):
+    input_data=json.loads(input_json)
+    players=input_data.get("players")
+    language=input_data.get("language")
+
+    prompts = []
+    for player in players:
+        query = f"SELECT * FROM c WHERE c.username = '{player}'"
+        items = list(prompt_container.query_items(query=query, enable_cross_partition_query=True))
     
-def podium(input_json):
+        for item in items:
+                for text in item.get("texts", []):
+                    # 只返回匹配指定语言的文本
+                    if text["language"] == language:
+                        prompts.append({
+                            "id": item["id"],
+                            "text": text["text"],
+                            "username": item["username"]
+                        })
+
+        
+    return json.dumps(prompts)
+
+def get_podium():
+    try:
+        
+        query = "SELECT c.username, c.games_played, c.total_score FROM c"
+        players = list(prompt_container.query_items(query=query, enable_cross_partition_query=True))
+        
+        
+        valid_players = [
+            {"username": p["username"], "games_played": p["games_played"], "total_score": p["total_score"], 
+             "ppgr": p["total_score"] / p["games_played"]} 
+            for p in players if p["games_played"] > 0
+        ]
+
+        
+        valid_players.sort(key=lambda x: (-x["ppgr"], x["games_played"], x["username"]))
+
+        
+        podium = {"gold": [], "silver": [], "bronze": []}
+        if not valid_players:
+            return json.dumps(podium)
+
+        
+        podium_ranks = []
+        for player in valid_players:
+            if len(podium_ranks) < 3:
+                if not podium_ranks or player["ppgr"] != podium_ranks[-1]:
+                    podium_ranks.append(player["ppgr"])
+
+        
+        for player in valid_players:
+            if player["ppgr"] == podium_ranks[0]:
+                podium["gold"].append({"username": player["username"], "games_played": player["games_played"], "total_score": player["total_score"]})
+            elif len(podium_ranks) > 1 and player["ppgr"] == podium_ranks[1]:
+                podium["silver"].append({"username": player["username"], "games_played": player["games_played"], "total_score": player["total_score"]})
+            elif len(podium_ranks) > 2 and player["ppgr"] == podium_ranks[2]:
+                podium["bronze"].append({"username": player["username"], "games_played": player["games_played"], "total_score": player["total_score"]})
+
+        return json.dumps(podium)
+    
+    except exceptions.CosmosHttpResponseError as e:
+        return json.dumps({"result": False, "msg": f"An error occurred: {str(e)}"})
